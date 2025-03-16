@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ThumbsUp, Star, Zap } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Database, DollarSign, Laptop, BarChart, Cog } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 
 interface Idea {
   id: number
@@ -41,7 +42,23 @@ interface NewsArticle {
 }
 
 export default function Dashboard() {
-  const [ideas, setIdeas] = useState<Idea[]>([
+  const [ideas, setIdeas] = useState<Idea[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [newIdea, setNewIdea] = useState("")
+  const [newObjective, setNewObjective] = useState("")
+  const [submitter, setSubmitter] = useState("")
+  const [selectedTeam, setSelectedTeam] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const [selectedNews, setSelectedNews] = useState<NewsArticle | null>(null)
+  const [selectedTraining, setSelectedTraining] = useState<Training | null>(null)
+  const [selectedTeamIdeas, setSelectedTeamIdeas] = useState<{ team: string; ideas: Idea[] } | null>(null)
+  const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null)
+
+  const { toast } = useToast()
+
+  // Sample data for initial load if the database is empty
+  const sampleIdeas = [
     {
       id: 1,
       text: "AI-powered route optimization for faster deliveries",
@@ -82,56 +99,179 @@ export default function Dashboard() {
       team: "SAP",
       objective: "Optimize stock levels to reduce overstock by 30% and stockouts by 80%",
     },
-    {
-      id: 6,
-      text: "Automated financial forecasting using machine learning",
-      votes: 9,
-      submitter: "Ethan Brown",
-      team: "Finance",
-      objective: "Improve forecast accuracy by 40% and reduce financial planning time by 60%",
-    },
-    {
-      id: 7,
-      text: "AI-enhanced customer segmentation for targeted marketing",
-      votes: 11,
-      submitter: "Ava Garcia",
-      team: "Marketing",
-      objective: "Increase marketing ROI by 50% and customer engagement rates by 35%",
-    },
-    {
-      id: 8,
-      text: "Intelligent document processing for faster order handling",
-      votes: 6,
-      submitter: "Mason Taylor",
-      team: "IT",
-      objective: "Reduce order processing time by 70% and data entry errors by 90%",
-    },
-    {
-      id: 9,
-      text: "AI-powered supply chain optimization",
-      votes: 14,
-      submitter: "Isabella Martinez",
-      team: "Operations",
-      objective: "Reduce supply chain costs by 25% and improve on-time deliveries by 40%",
-    },
-    {
-      id: 10,
-      text: "Sentiment analysis for real-time customer feedback",
-      votes: 13,
-      submitter: "William Lee",
-      team: "Marketing",
-      objective: "Improve product development cycle by 30% and increase customer retention by 25%",
-    },
-  ])
-  const [newIdea, setNewIdea] = useState("")
-  const [newObjective, setNewObjective] = useState("")
-  const [submitter, setSubmitter] = useState("")
-  const [selectedTeam, setSelectedTeam] = useState("")
+  ]
 
-  const [selectedNews, setSelectedNews] = useState<NewsArticle | null>(null)
-  const [selectedTraining, setSelectedTraining] = useState<Training | null>(null)
-  const [selectedTeamIdeas, setSelectedTeamIdeas] = useState<{ team: string; ideas: Idea[] } | null>(null)
-  const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null)
+  // Fetch ideas from the API
+  const fetchIdeas = useCallback(async () => {
+    try {
+      setIsLoading(true)
+      const response = await fetch("/api/ideas")
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+
+      if (data.ideas && Array.isArray(data.ideas) && data.ideas.length > 0) {
+        setIdeas(data.ideas)
+      } else {
+        // If no ideas in the database yet, use sample data
+        setIdeas(sampleIdeas)
+      }
+    } catch (error) {
+      console.error("Error fetching ideas:", error)
+      toast({
+        title: "Error",
+        description: "Failed to load ideas. Using sample data instead.",
+        variant: "destructive",
+      })
+      setIdeas(sampleIdeas)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    fetchIdeas()
+  }, [fetchIdeas])
+
+  const handleSubmitIdea = async () => {
+    if (newIdea.trim() && newObjective.trim() && submitter.trim() && selectedTeam) {
+      try {
+        setIsSubmitting(true)
+
+        // Create the new idea object
+        const ideaToSubmit = {
+          text: newIdea,
+          objective: newObjective,
+          submitter: submitter,
+          team: selectedTeam,
+        }
+
+        // Optimistically update UI first for better UX
+        const optimisticIdea = {
+          id: Date.now(),
+          text: newIdea,
+          votes: 0,
+          submitter: submitter,
+          team: selectedTeam,
+          objective: newObjective,
+        }
+
+        // Update state immediately
+        setIdeas((prevIdeas) => [...prevIdeas, optimisticIdea])
+
+        // Clear form
+        setNewIdea("")
+        setNewObjective("")
+        setSubmitter("")
+        setSelectedTeam("")
+
+        // Show success toast
+        toast({
+          title: "Success",
+          description: "Your idea has been submitted!",
+        })
+
+        // Then try to persist to database
+        const response = await fetch("/api/ideas", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(ideaToSubmit),
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        const data = await response.json()
+
+        // If server returned a different ID, update the optimistic entry
+        if (data.idea && data.idea.id !== optimisticIdea.id) {
+          setIdeas((prevIdeas) =>
+            prevIdeas.map((idea) => (idea.id === optimisticIdea.id ? { ...idea, id: data.idea.id } : idea)),
+          )
+        }
+      } catch (error) {
+        console.error("Error submitting idea:", error)
+        // Don't remove the optimistic update, just notify the user
+        toast({
+          title: "Warning",
+          description: "Your idea was saved locally but may not have been saved to the database.",
+          variant: "destructive",
+        })
+      } finally {
+        setIsSubmitting(false)
+      }
+    } else {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all fields before submitting.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleVote = async (id: number) => {
+    try {
+      // Find the current idea
+      const currentIdea = ideas.find((idea) => idea.id === id)
+      if (!currentIdea) return
+
+      // Update UI immediately for better UX
+      setIdeas((prevIdeas) => prevIdeas.map((idea) => (idea.id === id ? { ...idea, votes: idea.votes + 1 } : idea)))
+
+      // Send update to server
+      const response = await fetch("/api/ideas/vote", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id }),
+      })
+
+      if (!response.ok) {
+        // If server update fails, revert the local change
+        setIdeas((prevIdeas) =>
+          prevIdeas.map((idea) => (idea.id === id ? { ...idea, votes: currentIdea.votes } : idea)),
+        )
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+    } catch (error) {
+      console.error("Error updating vote:", error)
+      toast({
+        title: "Error",
+        description: "Failed to update vote. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const getTeamStats = () => {
+    const stats = ideas.reduce(
+      (acc, idea) => {
+        acc[idea.team] = (acc[idea.team] || 0) + 1
+        return acc
+      },
+      {} as Record<string, number>,
+    )
+
+    return Object.entries(stats)
+      .sort((a, b) => b[1] - a[1])
+      .map(([team, count]) => ({
+        team,
+        count,
+        percentage: (count / ideas.length) * 100,
+      }))
+  }
+
+  const handleTeamIconClick = (team: string) => {
+    const teamIdeas = ideas.filter((idea) => idea.team === team).sort((a, b) => b.votes - a.votes)
+    setSelectedTeamIdeas({ team, ideas: teamIdeas })
+  }
 
   const [news] = useState<NewsArticle[]>([
     {
@@ -245,53 +385,6 @@ export default function Dashboard() {
     },
   ])
 
-  const handleSubmitIdea = () => {
-    if (newIdea.trim() && newObjective.trim() && submitter.trim() && selectedTeam) {
-      setIdeas([
-        ...ideas,
-        {
-          id: Date.now(),
-          text: newIdea,
-          votes: 0,
-          submitter: submitter,
-          team: selectedTeam,
-          objective: newObjective,
-        },
-      ])
-      setNewIdea("")
-      setNewObjective("")
-      setSubmitter("")
-      setSelectedTeam("")
-    }
-  }
-
-  const handleVote = (id: number) => {
-    setIdeas(ideas.map((idea) => (idea.id === id ? { ...idea, votes: idea.votes + 1 } : idea)))
-  }
-
-  const getTeamStats = () => {
-    const stats = ideas.reduce(
-      (acc, idea) => {
-        acc[idea.team] = (acc[idea.team] || 0) + 1
-        return acc
-      },
-      {} as Record<string, number>,
-    )
-
-    return Object.entries(stats)
-      .sort((a, b) => b[1] - a[1])
-      .map(([team, count]) => ({
-        team,
-        count,
-        percentage: (count / ideas.length) * 100,
-      }))
-  }
-
-  const handleTeamIconClick = (team: string) => {
-    const teamIdeas = ideas.filter((idea) => idea.team === team).sort((a, b) => b.votes - a.votes)
-    setSelectedTeamIdeas({ team, ideas: teamIdeas })
-  }
-
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold mb-6">AI Innovation Dashboard</h1>
@@ -326,8 +419,14 @@ export default function Dashboard() {
                     <SelectItem value="Operations">Operations</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button onClick={handleSubmitIdea} className="w-full">
-                  Submit Idea <Zap className="ml-2 h-4 w-4" />
+                <Button
+                  onClick={handleSubmitIdea}
+                  className="w-full"
+                  disabled={
+                    isSubmitting || !newIdea.trim() || !newObjective.trim() || !submitter.trim() || !selectedTeam
+                  }
+                >
+                  {isSubmitting ? "Submitting..." : "Submit Idea"} <Zap className="ml-2 h-4 w-4" />
                 </Button>
               </div>
 
@@ -360,41 +459,51 @@ export default function Dashboard() {
               </div>
 
               <div className="flex-grow overflow-y-auto border rounded-lg p-4">
-                {ideas
-                  .sort((a, b) => b.votes - a.votes)
-                  .map((idea, index) => (
-                    <div
-                      key={idea.id}
-                      className={`mb-2 p-3 rounded-lg border transition-all ${
-                        index < 3 ? "bg-gradient-to-r from-amber-50 to-amber-100 border-amber-200" : "bg-muted"
-                      }`}
-                      onClick={() => setSelectedIdea(idea)}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-grow">
-                          <div className="flex items-center">
-                            {index < 3 && <Star className="h-4 w-4 text-yellow-500 mr-1" />}
-                            <span className="font-medium">{idea.text}</span>
+                {isLoading ? (
+                  <div className="flex justify-center items-center h-full">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : ideas.length > 0 ? (
+                  ideas
+                    .sort((a, b) => b.votes - a.votes)
+                    .map((idea, index) => (
+                      <div
+                        key={idea.id}
+                        className={`mb-2 p-3 rounded-lg border transition-all cursor-pointer ${
+                          index < 3 ? "bg-gradient-to-r from-amber-50 to-amber-100 border-amber-200" : "bg-muted"
+                        }`}
+                        onClick={() => setSelectedIdea(idea)}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-grow">
+                            <div className="flex items-center">
+                              {index < 3 && <Star className="h-4 w-4 text-yellow-500 mr-1" />}
+                              <span className="font-medium">{idea.text}</span>
+                            </div>
+                            <span className="text-xs text-gray-500 italic block mt-1">
+                              {idea.submitter} ({idea.team})
+                            </span>
                           </div>
-                          <span className="text-xs text-gray-500 italic block mt-1">
-                            {idea.submitter} ({idea.team})
-                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleVote(idea.id)
+                            }}
+                            className="flex items-center"
+                          >
+                            <ThumbsUp className="mr-1 h-4 w-4" />
+                            <span>{idea.votes}</span>
+                          </Button>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleVote(idea.id)
-                          }}
-                          className="flex items-center"
-                        >
-                          <ThumbsUp className="mr-1 h-4 w-4" />
-                          <span>{idea.votes}</span>
-                        </Button>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                ) : (
+                  <div className="flex justify-center items-center h-full text-gray-500">
+                    No ideas yet. Be the first to submit one!
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
@@ -429,16 +538,9 @@ export default function Dashboard() {
         </Card>
 
         <Card className="col-span-1">
-          <CardHeader className="flex flex-row items-start justify-between">
-            <div>
-              <CardTitle>Available AI Trainings</CardTitle>
-              <CardDescription>Enhance your AI skills with these training programs</CardDescription>
-            </div>
-            <img
-              src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/lex-2cqgnFp5UjGGK88tMEyOVE8coxPbOk.png"
-              alt="Learning Platform Logo"
-              className="h-12 w-12 -mt-1"
-            />
+          <CardHeader>
+            <CardTitle>Available AI Trainings</CardTitle>
+            <CardDescription>Enhance your AI skills with these training programs</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-[600px] overflow-y-auto">

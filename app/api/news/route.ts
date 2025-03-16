@@ -2,8 +2,14 @@ import { NextResponse } from "next/server"
 
 export async function GET() {
   try {
+    // Check if API key exists
+    if (!process.env.NEWS_API_KEY) {
+      throw new Error("NEWS_API_KEY environment variable is not set")
+    }
+
     const response = await fetch(
-      `https://newsapi.org/v2/top-headlines?country=de&category=technology&apiKey=${process.env.NEWS_API_KEY}`,
+      `https://newsapi.org/v2/top-headlines?country=us&category=technology&apiKey=${process.env.NEWS_API_KEY}`,
+      { next: { revalidate: 3600 } }, // Cache for 1 hour
     )
 
     if (!response.ok) {
@@ -31,7 +37,27 @@ export async function GET() {
           title: article.title || "No title available",
           description: article.description || "No description available",
           url: article.url || "#",
+          source: article.source?.name || "Unknown Source",
+          date: new Date(article.publishedAt).toLocaleDateString() || "Unknown Date",
+          content: article.content || article.description || "No content available",
         })) || []
+
+    // If no AI news found, return a fallback message
+    if (aiNews.length === 0) {
+      return NextResponse.json({
+        articles: [
+          {
+            id: 1,
+            title: "No AI news found",
+            description: "Try again later for the latest AI news updates.",
+            url: "#",
+            source: "System",
+            date: new Date().toLocaleDateString(),
+            content: "No AI-related news articles were found in the current feed. Please check back later for updates.",
+          },
+        ],
+      })
+    }
 
     return NextResponse.json({ articles: aiNews })
   } catch (error) {
